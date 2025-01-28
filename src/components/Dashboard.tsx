@@ -6,6 +6,7 @@ import QuickBooks from './tabs/QuickBooks';
 import Reports from './tabs/Reports';
 import Investment from './tabs/Investment';
 import Portfolio from './tabs/Portfolio';
+import { Profile } from './Profile';
 
 interface Message {
   id: string;
@@ -126,9 +127,9 @@ const Dashboard: React.FC = () => {
       <div 
         className={`${
           sidebarOpen ? 'w-64' : 'w-0'
-        } bg-white shadow-lg transition-all duration-300 ease-in-out overflow-hidden`}
+        } bg-white shadow-lg transition-all duration-300 ease-in-out overflow-hidden flex flex-col`}
       >
-        <div className="p-4">
+        <div className="flex-1 p-4">
           <div className="flex items-center space-x-3 mb-8 px-4">
             <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
               <BrainCircuit className="w-5 h-5 text-white" />
@@ -154,6 +155,7 @@ const Dashboard: React.FC = () => {
             ))}
           </nav>
         </div>
+        <Profile />
       </div>
 
       {/* Main Content */}
