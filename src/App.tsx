@@ -1,5 +1,4 @@
 import React, { useEffect } from 'react';
-import { Home, BarChart3, Settings } from 'lucide-react';
 import { Auth } from './components/Auth';
 import Dashboard from './components/Dashboard';
 import { AuthProvider, useAuth } from './context/AuthContext';

@@ -7,83 +7,108 @@ import Reports from './tabs/Reports';
 import Investment from './tabs/Investment';
 import Portfolio from './tabs/Portfolio';
 import { Profile } from './Profile';
-
-interface Message {
-  id: string;
-  text: string;
-  sender: 'user' | 'ai';
-  timestamp: Date;
-}
-
-interface Conversation {
-  id: string;
-  title: string;
-  messages: Message[];
-  createdAt: Date;
-}
+import { useAuth } from '../context/AuthContext';
+import { conversationService, type Conversation, type Message } from '../services/conversationService';
+import { aiService } from '../services/aiService';
 
 type TabType = 'chat' | 'dashboard' | 'quickbooks' | 'reports' | 'investment' | 'portfolio';
 
 const Dashboard: React.FC = () => {
+  const { user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showLibrary, setShowLibrary] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('chat');
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [currentConversationId, setCurrentConversationId] = useState<string>('');
-  const [quickbooks, setQuickbooks] = useState({ isConnected: false });
+  const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState('');
+  const [conversationMessages, setConversationMessages] = useState<Record<string, number>>({});
 
-  // Initialize with a default conversation
+  // Load conversations when component mounts
   useEffect(() => {
-    if (conversations.length === 0) {
-      const newId = Date.now().toString();
-      const initialConversation: Conversation = {
-        id: newId,
-        title: 'New Conversation',
-        messages: [{
-          id: Date.now().toString(),
-          text: "Hello! I'm Pulse AI V2, your financial advisor. How can I help you today?",
-          sender: 'ai',
-          timestamp: new Date()
-        }],
-        createdAt: new Date()
-      };
-      setConversations([initialConversation]);
-      setCurrentConversationId(newId);
+    if (user) {
+      loadConversations();
     }
-  }, []);
+  }, [user]);
 
-  const currentConversation = conversations.find(c => c.id === currentConversationId);
+  // Load messages when active conversation changes
+  useEffect(() => {
+    if (activeConversation) {
+      loadMessages(activeConversation.id);
+    }
+  }, [activeConversation]);
 
-  const startNewChat = () => {
-    const newId = Date.now().toString();
-    const newConversation: Conversation = {
-      id: newId,
-      title: 'New Conversation',
-      messages: [{
-        id: Date.now().toString(),
-        text: "Hello! I'm Pulse AI V2, your financial advisor. How can I help you today?",
-        sender: 'ai',
-        timestamp: new Date()
-      }],
-      createdAt: new Date()
-    };
-
-    setConversations(prev => [newConversation, ...prev]);
-    setCurrentConversationId(newId);
-    setActiveTab('chat');
+  // Load message counts for all conversations
+  const loadMessageCounts = async () => {
+    const counts: Record<string, number> = {};
+    for (const conv of conversations) {
+      const messages = await conversationService.getMessages(conv.id);
+      counts[conv.id] = messages.length;
+    }
+    setConversationMessages(counts);
   };
 
-  const deleteConversation = (id: string) => {
-    setConversations(prev => prev.filter(c => c.id !== id));
-    if (currentConversationId === id) {
-      const remainingConversations = conversations.filter(c => c.id !== id);
-      if (remainingConversations.length > 0) {
-        setCurrentConversationId(remainingConversations[0].id);
-      } else {
-        startNewChat();
+  useEffect(() => {
+    loadMessageCounts();
+  }, [conversations]);
+
+  const loadConversations = async () => {
+    try {
+      if (!user) return;
+      const conversations = await conversationService.getConversations(user);
+      setConversations(conversations);
+      setError(null);
+    } catch (err) {
+      setError('Failed to load conversations');
+      console.error('Error loading conversations:', err);
+    }
+  };
+
+  const loadMessages = async (conversationId: string) => {
+    try {
+      const messages = await conversationService.getMessages(conversationId);
+      setMessages(messages);
+      setError(null);
+    } catch (err) {
+      setError('Failed to load messages');
+      console.error('Error loading messages:', err);
+    }
+  };
+
+  const createNewConversation = async () => {
+    try {
+      if (!user) return;
+      const title = 'New Conversation';
+      const conversation = await conversationService.createConversation(user, title);
+      if (conversation) {
+        setConversations(prev => [conversation, ...prev]);
+        setActiveConversation(conversation);
+        setActiveTab('chat');
+        setMessages([]);
+        setError(null);
       }
+    } catch (err) {
+      setError('Failed to create new conversation');
+      console.error('Error creating conversation:', err);
+    }
+  };
+
+  const deleteConversation = async (conversationId: string) => {
+    try {
+      const success = await conversationService.deleteConversation(conversationId);
+      if (success) {
+        setConversations(prev => prev.filter(conv => conv.id !== conversationId));
+        if (activeConversation?.id === conversationId) {
+          setActiveConversation(null);
+          setMessages([]);
+        }
+        setError(null);
+      }
+    } catch (err) {
+      setError('Failed to delete conversation');
+      console.error('Error deleting conversation:', err);
     }
   };
 
@@ -92,24 +117,41 @@ const Dashboard: React.FC = () => {
     setNewTitle(currentTitle);
   };
 
-  const saveTitle = (id: string) => {
-    setConversations(prev =>
-      prev.map(c =>
-        c.id === id ? { ...c, title: newTitle.trim() || 'Untitled Conversation' } : c
-      )
-    );
-    setEditingTitle(null);
-    setNewTitle('');
+  const saveTitle = async (id: string) => {
+    try {
+      const success = await conversationService.updateConversationTitle(id, newTitle.trim() || 'Untitled');
+      if (success) {
+        setConversations(prev =>
+          prev.map(c =>
+            c.id === id ? { ...c, title: newTitle.trim() || 'Untitled' } : c
+          )
+        );
+        if (activeConversation?.id === id) {
+          setActiveConversation(prev => prev ? { ...prev, title: newTitle.trim() || 'Untitled' } : prev);
+        }
+        setEditingTitle(null);
+        setNewTitle('');
+        setError(null);
+      }
+    } catch (err) {
+      setError('Failed to update conversation title');
+      console.error('Error updating title:', err);
+    }
   };
 
-  const updateMessages = (newMessages: Message[]) => {
-    if (!currentConversationId) return;
-    
-    setConversations(prev =>
-      prev.map(c =>
-        c.id === currentConversationId ? { ...c, messages: newMessages } : c
-      )
-    );
+  const sendMessage = async (text: string) => {
+    if (!activeConversation || !text.trim()) return;
+
+    try {
+      await aiService.processUserMessage(activeConversation.id, text);
+      // Refresh messages after sending
+      const updatedMessages = await conversationService.getMessages(activeConversation.id);
+      setMessages(updatedMessages);
+      setError(null);
+    } catch (err) {
+      setError('Failed to send message');
+      console.error('Error sending message:', err);
+    }
   };
 
   const tabs = [
@@ -181,7 +223,7 @@ const Dashboard: React.FC = () => {
                 <BookOpen className="w-6 h-6" />
               </button>
               <h2 className="text-xl font-semibold text-gray-800">
-                {activeTab === 'chat' && (currentConversation?.title || 'Chat')}
+                {activeTab === 'chat' && (activeConversation?.title || 'Chat')}
                 {activeTab === 'dashboard' && 'Financial Dashboard'}
                 {activeTab === 'reports' && 'Financial Reports'}
                 {activeTab === 'investment' && 'Investment Management'}
@@ -203,7 +245,7 @@ const Dashboard: React.FC = () => {
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-lg font-semibold text-gray-900">Conversations</h3>
                   <button
-                    onClick={startNewChat}
+                    onClick={createNewConversation}
                     className="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                     title="Start New Chat"
                   >
@@ -215,15 +257,15 @@ const Dashboard: React.FC = () => {
                     <div
                       key={conversation.id}
                       className={`group relative p-3 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer ${
-                        currentConversationId === conversation.id ? 'bg-indigo-50' : ''
+                        activeConversation?.id === conversation.id ? 'bg-indigo-50' : ''
                       }`}
                       onClick={() => {
-                        setCurrentConversationId(conversation.id);
+                        setActiveConversation(conversation);
                         setActiveTab('chat');
                       }}
                     >
                       {editingTitle === conversation.id ? (
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2" onClick={e => e.stopPropagation()}>
                           <input
                             type="text"
                             value={newTitle}
@@ -237,10 +279,7 @@ const Dashboard: React.FC = () => {
                             }}
                           />
                           <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              saveTitle(conversation.id);
-                            }}
+                            onClick={() => saveTitle(conversation.id)}
                             className="p-1 text-green-600 hover:bg-green-50 rounded"
                           >
                             <Check className="w-4 h-4" />
@@ -272,7 +311,7 @@ const Dashboard: React.FC = () => {
                             </button>
                           </div>
                           <p className="text-xs text-gray-500 mt-1">
-                            {conversation.messages.length - 1} messages
+                            {conversationMessages[conversation.id] || 0} messages
                           </p>
                         </>
                       )}
@@ -282,7 +321,7 @@ const Dashboard: React.FC = () => {
                     <div className="text-center py-8">
                       <p className="text-sm text-gray-500">No conversations yet</p>
                       <button
-                        onClick={startNewChat}
+                        onClick={createNewConversation}
                         className="mt-2 text-sm text-indigo-600 hover:text-indigo-700"
                       >
                         Start a new chat
@@ -295,19 +334,25 @@ const Dashboard: React.FC = () => {
 
             {/* Content Area */}
             <div className="flex-1 overflow-auto">
-              {activeTab === 'chat' && currentConversation && (
+              {error && (
+                <div className="p-4 bg-red-50 border-l-4 border-red-500 text-red-700">
+                  {error}
+                </div>
+              )}
+              {activeTab === 'chat' && activeConversation && (
                 <Chat 
-                  messages={currentConversation.messages}
-                  setMessages={updateMessages}
+                  messages={messages}
+                  setMessages={setMessages}
                   groupedMessages={{}}
                   showLibrary={showLibrary}
+                  sendMessage={sendMessage}
                 />
               )}
               {activeTab === 'dashboard' && <FinanceDashboard />}
               {activeTab === 'reports' && <Reports />}
               {activeTab === 'investment' && <Investment />}
               {activeTab === 'portfolio' && <Portfolio />}
-              {activeTab === 'quickbooks' && <QuickBooks isConnected={quickbooks.isConnected} />}
+              {activeTab === 'quickbooks' && <QuickBooks isConnected={false} />}
             </div>
           </div>
         </main>
